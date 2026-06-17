@@ -1,0 +1,21 @@
+{
+  "name": "call-your-clanker",
+  "version": "0.1.0",
+  "description": "Voice robo-advisor: call your clanker. Twilio + ElevenLabs + MoonPay + Claude Fable.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "call-me": "node scripts/call-me.js",
+    "tunnel": "bash scripts/dev-tunnel.sh"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "twilio": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

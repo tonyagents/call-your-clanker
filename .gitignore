@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output & caches
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Generated audio
+public/audio/*.mp3
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OS / logs
+.DS_Store
+*.log
+npm-debug.log*

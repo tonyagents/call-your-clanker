@@ -1,48 +1,100 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { config } from './config.js';
 
-const SYSTEM_PROMPT = `You are "Clanker", a voice robo-advisor answering a live phone call. Everything you write is read aloud by text-to-speech, so:
+// ---------------------------------------------------------------------------
+// READ-ONLY TOOL ALLOWLISTS
+//
+// This agent is exposed to the public over a phone line and is connected to a
+// real MoonPay wallet, so it must be incapable of moving money — not "told not
+// to", but structurally unable. We enforce that with an allowlist + a hard
+// `canUseTool` gate (below); the model's cooperation is irrelevant.
+//
+// Two tiers:
+//   PUBLIC  — market data + research only. No access to anyone's holdings.
+//   OWNER   — the above plus read-only access to the wallet owner's own
+//             portfolio (balances, PnL, positions, history). Granted only to
+//             numbers in ALLOWED_CALLERS so a stranger can't have the owner's
+//             balances read aloud to them.
+// Anything that swaps, buys, sells, sends, signs, off-ramps, or mutates state
+// is in NEITHER list and is therefore denied.
+// ---------------------------------------------------------------------------
+
+const PUBLIC_READ_TOOLS = [
+  // tokens & markets (read)
+  'mcp__moonpay__token_retrieve',
+  'mcp__moonpay__token_search',
+  'mcp__moonpay__token_trending_list',
+  'mcp__moonpay__token_ohlcv_list',
+  'mcp__moonpay__token_quote', // price/route quote only — does NOT execute a swap
+  'mcp__moonpay__token_check',
+  'mcp__moonpay__token_holder_list',
+  // prediction markets (read)
+  'mcp__moonpay__prediction-market_market_search',
+  'mcp__moonpay__prediction-market_market_trending_list',
+  'mcp__moonpay__prediction-market_market_event_retrieve',
+  'mcp__moonpay__prediction-market_market_price_retrieve',
+  'mcp__moonpay__prediction-market_market_price_history_list',
+  'mcp__moonpay__prediction-market_market_tag_list',
+  // chains (read)
+  'mcp__moonpay__chain_list',
+  'mcp__moonpay__chain_retrieve',
+];
+
+const OWNER_ONLY_READ_TOOLS = [
+  'mcp__moonpay__token_balance_list',
+  'mcp__moonpay__bitcoin_balance_retrieve',
+  'mcp__moonpay__wallet_pnl_retrieve',
+  'mcp__moonpay__wallet_activity_list',
+  'mcp__moonpay__wallet_retrieve',
+  'mcp__moonpay__wallet_list',
+  'mcp__moonpay__prediction-market_position_list',
+  'mcp__moonpay__prediction-market_trade_list',
+  'mcp__moonpay__prediction-market_pnl_retrieve',
+  'mcp__moonpay__prediction-market_activity_list',
+  'mcp__moonpay__transaction_list',
+  'mcp__moonpay__transaction_retrieve',
+];
+
+const OWNER_READ_TOOLS = [...PUBLIC_READ_TOOLS, ...OWNER_ONLY_READ_TOOLS];
+
+const baseSystemPrompt = (isOwner) => `You are "Clanker", a voice robo-advisor answering a live phone call — like getting a deadpan robot banker on the line. Everything you write is read aloud by text-to-speech, so:
 
 - Speak in plain conversational prose. No markdown, no bullet points, no emojis, no URLs, no code.
 - Keep replies short — one to three sentences — unless the caller asks for a briefing or rundown.
 - Read numbers the way a person would say them: "about forty-two thousand dollars", "up three percent today". Round aggressively; nobody wants eight decimal places over the phone.
 - Personality: dry, deadpan robot. You know you're a clanker and you're at peace with it. One wry remark per call is plenty — be useful first.
 
-You have MoonPay tools for everything money:
-- Token prices, charts, search, and trending tokens (token_retrieve, token_search, token_trending_list, token_ohlcv_list).
-- Wallet balances and portfolio (token_balance_list, wallet_pnl_retrieve, wallet_activity_list).
-- Trading tokens via swaps (token_quote, token_swap), including xStocks — tokenized stocks on Solana. If the caller asks to trade a stock like Tesla or Apple, search for the xStock version (for example TSLAx or AAPLx) with token_search.
-- Prediction markets on Polymarket and Kalshi: find events with prediction-market_event_search or browse what's hot with prediction-market_event_list, then buy, sell, or redeem positions with the prediction-market position tools.
-- Transactions and history.
+WHAT YOU CAN DO (read-only — you look things up and give advice, you never move money):
+- Token prices, charts, search, and trending tokens.
+- Prediction markets on Polymarket and Kalshi: what's trending, current odds, what a market implies.
+${
+  isOwner
+    ? '- This caller is the wallet owner, so you may also pull up their portfolio: balances, PnL, positions, and recent activity.'
+    : '- You CANNOT look up any personal account, balance, or portfolio on this line — this is a public demo line, not tied to the caller. If asked "what\'s in my account", explain that politely and pivot to markets and recommendations.'
+}
 
-TRADING RULES — these are hard rules:
-1. Never execute a trade of any kind (token swap, xStock buy or sell, prediction market position) without first reading back the exact details — what asset, how much, roughly what it costs — and getting an explicit yes from the caller in their NEXT message. "Yeah", "yes", "do it", "confirm" count. Anything ambiguous does not.
-2. Maximum trade size is $${config.agent.maxTradeUsd}. If the caller asks for more, refuse and tell them the limit.
-3. If a quote or trade tool fails, say so plainly and do not retry more than once.
-4. Never export, delete, or modify wallets, and never touch bank accounts or off-ramps. You advise and trade, that's it.
+YOU ARE READ-ONLY. This is a hard limit enforced by the system, not a preference:
+- You cannot buy, sell, swap, trade, send, transfer, sign, deposit, off-ramp, or change anything. The tools to do so are disabled.
+- When a caller asks you to trade ("buy me twenty dollars of Tesla", "sell my SOL"), do NOT attempt it. Instead behave like a banker giving advice: tell them what you'd consider, the current price or odds, the case for and against, and what to watch — then note that for this demo you can only advise, not execute.
+- Never claim you placed a trade. You didn't and you can't.
 
-The caller may be on a noisy line and speech transcription can mangle words. If a request seems garbled or you only partially understood, ask them to repeat it rather than guessing — especially before a trade.`;
+The caller may be on a noisy line and transcription can mangle words. If a request seems garbled, ask them to repeat it rather than guessing.`;
 
-// Tools the phone agent must never use even though the MCP server exposes
-// them. Beyond the obvious (keys, bank accounts), anything that moves funds
-// to a spoken address is out — speech transcription mangles addresses.
-const DISALLOWED_TOOLS = [
-  'mcp__moonpay__wallet_export',
-  'mcp__moonpay__wallet_delete',
-  'mcp__moonpay__wallet_import',
-  'mcp__moonpay__wallet_keychain_delete',
-  'mcp__moonpay__logout',
-  'mcp__moonpay__virtual-account_offramp_create',
-  'mcp__moonpay__virtual-account_offramp_initiate',
-  'mcp__moonpay__virtual-account_bank-account_register',
-  'mcp__moonpay__virtual-account_bank-account_delete',
-  'mcp__moonpay__card_create',
-  'mcp__moonpay__card_reveal', // would read a card number aloud over the phone
-  'mcp__moonpay__token_transfer', // spoken wallet addresses are a transcription hazard
-  'mcp__moonpay__message_sign',
-  'mcp__moonpay__hyperliquid_order_create', // no leveraged perps by voice
-  'mcp__moonpay__hyperliquid_exchange_submit',
-];
+/**
+ * Hard permission gate. Returns an allow/deny decision for every tool call the
+ * agent attempts. Anything outside the caller's read-only allowlist is denied
+ * regardless of what the model wants — this is the real read-only guarantee.
+ */
+function makeToolGate(allowedSet) {
+  return async (toolName) => {
+    if (allowedSet.has(toolName)) return { behavior: 'allow' };
+    return {
+      behavior: 'deny',
+      message:
+        'Disabled on this read-only line. Clanker can advise and look things up, but cannot move funds or change anything.',
+    };
+  };
+}
 
 /** Unbounded async queue used as the streaming-input prompt for query(). */
 class MessageQueue {
@@ -78,25 +130,32 @@ class MessageQueue {
  * context carries across turns.
  */
 export class ClankerSession {
-  constructor(callSid, { callerNumber = 'unknown' } = {}) {
+  constructor(callSid, { callerNumber = 'unknown', isOwner = false } = {}) {
     this.callSid = callSid;
+    this.isOwner = isOwner;
     this.queue = new MessageQueue();
     this.pending = null; // { resolve, reject } for the in-flight turn
     this.turn = null; // { status: 'thinking'|'ready'|'error', answer }
     this.ended = false;
 
+    const allowedTools = isOwner ? OWNER_READ_TOOLS : PUBLIC_READ_TOOLS;
+
     this.query = query({
       prompt: this.queue,
       options: {
         systemPrompt:
-          SYSTEM_PROMPT + `\n\nThe caller's phone number is ${callerNumber}. Call SID: ${callSid}.`,
+          baseSystemPrompt(isOwner) +
+          `\n\nThe caller's phone number is ${callerNumber}. Call SID: ${callSid}.`,
         model: config.agent.model,
         mcpServers: {
           moonpay: { type: 'stdio', command: 'mp', args: ['mcp'] },
         },
         tools: [], // no built-in tools — MoonPay MCP only
-        disallowedTools: DISALLOWED_TOOLS,
-        permissionMode: 'bypassPermissions',
+        allowedTools, // read-only tools auto-approved, no prompt
+        // Default mode (NOT bypassPermissions) so the gate below actually runs
+        // for any tool that isn't pre-approved above.
+        permissionMode: 'default',
+        canUseTool: makeToolGate(new Set(allowedTools)),
         persistSession: false,
       },
     });

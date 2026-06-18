@@ -19,9 +19,14 @@ export const config = {
     phoneNumber: required('TWILIO_PHONE_NUMBER'),
   },
 
-  // Only this number may talk to the clanker (your cell, E.164).
-  // Comma-separate to allow several. Empty = allow anyone (NOT recommended:
-  // the agent holds a real wallet).
+  // Public demo mode. When true (default), ANYONE may call — but the agent is
+  // read-only and strangers get market data + recommendations only, never the
+  // owner's portfolio. Set PUBLIC_MODE=false to lock the line to ALLOWED_CALLERS.
+  publicMode: (process.env.PUBLIC_MODE || 'true').toLowerCase() !== 'false',
+
+  // The wallet owner's number(s), E.164, comma-separated. These callers are
+  // treated as the owner and additionally get read-only access to the owner's
+  // own portfolio (balances, PnL, positions, history). Everyone else is public.
   allowedCallers: (process.env.ALLOWED_CALLERS || '')
     .split(',')
     .map((s) => s.trim())

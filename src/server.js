@@ -5,18 +5,26 @@ import twilio from 'twilio';
 import { config } from './config.js';
 import { ClankerSession } from './agent.js';
 import { speak, synthesize } from './tts.js';
+import { landingPage } from './landing.js';
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use('/audio', express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'audio')));
 
+// Public marketing site: the phone number + a scannable QR that dials it.
+app.get('/', async (_req, res) => {
+  res.type('html').send(await landingPage());
+});
+
 /** Live call sessions, keyed by Twilio CallSid. */
 const sessions = new Map();
 
 const LINES = {
   greeting:
-    "Clanker speaking. Prices, trending tokens, trades, prediction markets — what do you need?",
+    "Clanker speaking. Prices, trending tokens, prediction markets, recommendations — what do you need?",
+  ownerGreeting:
+    "Clanker speaking. Markets, your portfolio, recommendations — what do you need?",
   briefingGreeting: 'Clanker here. You asked for a call, so I ran the numbers. One second.',
   ack: 'On it. Give me a moment.',
   still: 'Still working. The blockchain waits for no one, except right now.',
@@ -73,17 +81,19 @@ app.post('/voice', async (req, res) => {
   if (!validateTwilio(req, res)) return;
   const { CallSid, From, To, Direction } = req.body;
   const caller = Direction === 'inbound' ? From : To;
+  const isOwner = config.allowedCallers.includes(caller);
 
-  if (config.allowedCallers.length && !config.allowedCallers.includes(caller)) {
-    console.warn(`[server] blocked caller ${caller}`);
+  // Locked-down mode: only the owner's numbers may call.
+  if (!config.publicMode && !isOwner) {
+    console.warn(`[server] blocked caller ${caller} (PUBLIC_MODE=false)`);
     const vr = new VoiceResponse();
     vr.say({ voice: 'Polly.Matthew-Neural' }, 'This clanker does not know you. Goodbye.');
     vr.hangup();
     return sendTwiml(res, vr);
   }
 
-  console.log(`[server] call ${CallSid} from ${caller} (${Direction})`);
-  const session = new ClankerSession(CallSid, { callerNumber: caller });
+  console.log(`[server] call ${CallSid} from ${caller} (${Direction}, ${isOwner ? 'owner' : 'public'})`);
+  const session = new ClankerSession(CallSid, { callerNumber: caller, isOwner });
   sessions.set(CallSid, session);
 
   const vr = new VoiceResponse();
@@ -95,7 +105,7 @@ app.post('/voice', async (req, res) => {
     await speak(vr, LINES.briefingGreeting);
     vr.redirect({ method: 'POST' }, '/voice/wait?n=0');
   } else {
-    await speak(gatherInto(vr), LINES.greeting);
+    await speak(gatherInto(vr), isOwner ? LINES.ownerGreeting : LINES.greeting);
     vr.redirect({ method: 'POST' }, '/voice/turn');
   }
   sendTwiml(res, vr);

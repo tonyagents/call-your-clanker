@@ -43,4 +43,17 @@ export const config = {
     // Hard ceiling read into the system prompt; the agent refuses bigger trades.
     maxTradeUsd: Number(process.env.MAX_TRADE_USD || 100),
   },
+
+  // Shared secret required to trigger outbound calls via POST /call. This
+  // endpoint can make the Twilio account dial ANY number, so it must never be
+  // open on a public URL. Fail closed: if unset, /call is disabled entirely.
+  callSecret: process.env.CALL_SECRET || '',
+
+  // Abuse / cost guardrails for a publicly-listed number.
+  limits: {
+    maxConcurrentCalls: Number(process.env.MAX_CONCURRENT_CALLS || 4), // also keeps us under ElevenLabs' concurrency cap
+    maxTurnsPerCall: Number(process.env.MAX_TURNS_PER_CALL || 25),
+    callsPerCallerWindow: Number(process.env.CALLS_PER_CALLER_WINDOW || 6), // per caller number...
+    callerWindowMinutes: Number(process.env.CALLER_WINDOW_MINUTES || 30), // ...in this many minutes
+  },
 };

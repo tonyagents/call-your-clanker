@@ -11,7 +11,17 @@ const body = new URLSearchParams();
 if (to) body.set('to', to);
 if (intent) body.set('intent', intent);
 
-const res = await fetch(`http://localhost:${port}/call`, { method: 'POST', body });
+const secret = process.env.CALL_SECRET || '';
+if (!secret) {
+  console.error('CALL_SECRET is not set in .env — outbound calling is disabled.');
+  process.exit(1);
+}
+
+const res = await fetch(`http://localhost:${port}/call`, {
+  method: 'POST',
+  headers: { 'x-call-secret': secret },
+  body,
+});
 const json = await res.json();
 if (!res.ok) {
   console.error('Failed:', json);

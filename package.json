@@ -7,7 +7,9 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "call-me": "node scripts/call-me.js",
-    "tunnel": "bash scripts/dev-tunnel.sh"
+    "tunnel": "bash scripts/dev-tunnel.sh",
+    "watchdog": "bash scripts/watchdog.sh",
+    "setup-domain": "bash scripts/setup-domain.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.0",

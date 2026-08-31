@@ -1,7 +1,7 @@
 {
   "name": "call-your-clanker",
   "version": "0.1.0",
-  "description": "Voice robo-advisor: call your clanker. Twilio + ElevenLabs + MoonPay + Claude Fable.",
+  "description": "Voice robo-advisor: call your clanker. Twilio + ElevenLabs + Nova (financial-data MCP) + Claude Fable.",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",

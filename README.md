@@ -6,20 +6,27 @@ banker-style recommendations, all by voice. **Read-only**: it advises, it never
 moves money (see [Read-only by design](#read-only-by-design)).
 
 ```
-You ──phone──> Twilio ──webhook──> this server ──> Claude (Fable) + MoonPay MCP
+You ──phone──> Twilio ──webhook──> this server ──> Claude (Fable) + Nova MCP
                  ▲                      │
                  └── ElevenLabs TTS <───┘
 ```
 
 - **Twilio** answers/places calls and transcribes your speech (`<Gather>`).
 - **Claude Agent SDK** runs one persistent Fable session per call, with the
-  MoonPay MCP server (`mp mcp`) as its only toolset.
+  Nova MCP server (`mp mcp`) as its only toolset.
 - **ElevenLabs** gives the clanker its voice (falls back to Twilio Polly
   if no key is set).
 
+> **Note on "Nova":** this is a generic placeholder standing in for the real
+> financial-data CLI/MCP this project talks to (prices, trending tokens,
+> prediction-market odds, wallet reads). The actual CLI command (`mp`) and
+> MCP tool wiring in `src/agent.js` are left intact and functional — a public
+> fork should swap in its own financial-data API/MCP and CLI in their place.
+
 ## Prerequisites
 
-- `mp` CLI installed and logged in (`mp login`) — the agent uses your wallet
+- A financial-data CLI installed and logged in (here, the `mp` CLI —
+  `mp login`) — the agent uses your wallet
 - `claude` CLI logged in (the Agent SDK uses its credentials)
 - A Twilio account with a voice-capable phone number
 - (Optional) An ElevenLabs API key
@@ -76,7 +83,7 @@ of moving money — enforced in code, not by asking the model nicely:
   caller can't have your balances read aloud to them.
 - **`PUBLIC_MODE=false`** locks the whole line back down to `ALLOWED_CALLERS`.
 - **Twilio signature validation** on every webhook.
-- **No built-in tools** — MoonPay MCP read tools only.
+- **No built-in tools** — Nova MCP read tools only.
 
 Asked to trade, Clanker behaves like a banker: it gives you the price/odds, the
 case for and against, and what to watch — then reminds you it can only advise.

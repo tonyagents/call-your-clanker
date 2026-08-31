@@ -2,10 +2,23 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { config } from './config.js';
 
 // ---------------------------------------------------------------------------
+// NOTE ON "NOVA": this project's financial data/wallet reads (prices, trending
+// tokens, prediction-market odds, portfolio) are served by a real financial
+// CLI/MCP server, invoked below via `command: 'mp'` / `args: ['mcp']`. That
+// CLI binary name and its tool surface are left unchanged and fully
+// functional. Every reference to it in comments/docs/prompts here uses the
+// generic placeholder "Nova" (including the `mcp__nova__*` tool-name prefix,
+// which is just the label this file chose for the MCP server — the SDK
+// derives that prefix from the key you give it, not from anything the real
+// server declares). A public fork should swap in its own financial-data
+// CLI/MCP and adjust the tool names accordingly.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // READ-ONLY TOOL ALLOWLISTS
 //
 // This agent is exposed to the public over a phone line and is connected to a
-// real MoonPay wallet, so it must be incapable of moving money — not "told not
+// real Nova wallet, so it must be incapable of moving money — not "told not
 // to", but structurally unable. We enforce that with an allowlist + a hard
 // `canUseTool` gate (below); the model's cooperation is irrelevant.
 //
@@ -21,47 +34,47 @@ import { config } from './config.js';
 
 const PUBLIC_READ_TOOLS = [
   // tokens & markets (read)
-  'mcp__moonpay__token_retrieve',
-  'mcp__moonpay__token_search',
-  'mcp__moonpay__token_trending_list',
-  'mcp__moonpay__token_ohlcv_list',
-  'mcp__moonpay__token_quote', // price/route quote only — does NOT execute a swap
-  'mcp__moonpay__token_check',
-  'mcp__moonpay__token_holder_list',
-  // prediction markets (read). NOTE: current MoonPay CLI exposes these under
+  'mcp__nova__token_retrieve',
+  'mcp__nova__token_search',
+  'mcp__nova__token_trending_list',
+  'mcp__nova__token_ohlcv_list',
+  'mcp__nova__token_quote', // price/route quote only — does NOT execute a swap
+  'mcp__nova__token_check',
+  'mcp__nova__token_holder_list',
+  // prediction markets (read). NOTE: current Nova CLI exposes these under
   // the `event_*` / `market_ohlcv_list` names — the older `market_*` names
   // (search/trending/price) no longer exist, so don't reintroduce them.
-  'mcp__moonpay__prediction-market_event_search',
-  'mcp__moonpay__prediction-market_event_list', // browse / what's hot
-  'mcp__moonpay__prediction-market_event_retrieve', // odds & details for one event
-  'mcp__moonpay__prediction-market_market_ohlcv_list', // odds history
+  'mcp__nova__prediction-market_event_search',
+  'mcp__nova__prediction-market_event_list', // browse / what's hot
+  'mcp__nova__prediction-market_event_retrieve', // odds & details for one event
+  'mcp__nova__prediction-market_market_ohlcv_list', // odds history
   // chains (read)
-  'mcp__moonpay__chain_list',
-  'mcp__moonpay__chain_retrieve',
+  'mcp__nova__chain_list',
+  'mcp__nova__chain_retrieve',
 ];
 
 const OWNER_ONLY_READ_TOOLS = [
-  'mcp__moonpay__token_balance_list',
-  'mcp__moonpay__bitcoin_balance_retrieve',
-  'mcp__moonpay__wallet_pnl_retrieve',
-  'mcp__moonpay__wallet_activity_list',
-  'mcp__moonpay__wallet_retrieve',
-  'mcp__moonpay__wallet_list',
-  'mcp__moonpay__prediction-market_position_list',
-  'mcp__moonpay__prediction-market_order_retrieve',
-  'mcp__moonpay__transaction_list',
-  'mcp__moonpay__transaction_retrieve',
+  'mcp__nova__token_balance_list',
+  'mcp__nova__bitcoin_balance_retrieve',
+  'mcp__nova__wallet_pnl_retrieve',
+  'mcp__nova__wallet_activity_list',
+  'mcp__nova__wallet_retrieve',
+  'mcp__nova__wallet_list',
+  'mcp__nova__prediction-market_position_list',
+  'mcp__nova__prediction-market_order_retrieve',
+  'mcp__nova__transaction_list',
+  'mcp__nova__transaction_retrieve',
 ];
 
 const OWNER_READ_TOOLS = [...PUBLIC_READ_TOOLS, ...OWNER_ONLY_READ_TOOLS];
 
-// Built-in Agent SDK tools (NOT MoonPay MCP) for live news/headlines. Both are
+// Built-in Agent SDK tools (NOT Nova MCP) for live news/headlines. Both are
 // read-only — WebSearch returns headlines + snippets, WebFetch reads one URL.
-// Available to every caller. Kept separate from the MoonPay allowlists so the
+// Available to every caller. Kept separate from the Nova allowlists so the
 // boot sanity-check (which validates against the MCP server) ignores them.
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 
-// Every tool the MoonPay MCP server (`mp mcp`) exposes — 138 of them. The
+// Every tool the Nova MCP server (`mp mcp`) exposes — 138 of them. The
 // server can't be told to expose a subset, and with this many tools the Agent
 // SDK defers them all behind a tool-search step: the model must SEARCH for a
 // tool before it can call it, adding a round-trip to every turn. We don't want
@@ -69,152 +82,152 @@ const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 // allowlist) and disallow the rest, which removes them from the model's context
 // entirely — no tool search, leaner prompt, faster first token. The canUseTool
 // gate below remains the real safety boundary regardless of what's loaded.
-const ALL_MOONPAY_TOOLS = [
-  'mcp__moonpay__app_activation_create',
-  'mcp__moonpay__bitcoin_balance_retrieve',
-  'mcp__moonpay__buy',
-  'mcp__moonpay__card_create',
-  'mcp__moonpay__card_delegation_approve_transaction_build',
-  'mcp__moonpay__card_delegation_revoke_transaction_build',
-  'mcp__moonpay__card_delegation_token_retrieve',
-  'mcp__moonpay__card_freeze',
-  'mcp__moonpay__card_onboarding_check',
-  'mcp__moonpay__card_onboarding_finish',
-  'mcp__moonpay__card_onboarding_start',
-  'mcp__moonpay__card_retrieve',
-  'mcp__moonpay__card_reveal',
-  'mcp__moonpay__card_transaction_list',
-  'mcp__moonpay__card_unfreeze',
-  'mcp__moonpay__card_user_retrieve',
-  'mcp__moonpay__card_wallet_check',
-  'mcp__moonpay__card_wallet_link',
-  'mcp__moonpay__card_wallet_list',
-  'mcp__moonpay__card_wallet_unlink',
-  'mcp__moonpay__chain_list',
-  'mcp__moonpay__chain_retrieve',
-  'mcp__moonpay__commerce_cart_add',
-  'mcp__moonpay__commerce_cart_remove',
-  'mcp__moonpay__commerce_cart_retrieve',
-  'mcp__moonpay__commerce_cart_update',
-  'mcp__moonpay__commerce_checkout',
-  'mcp__moonpay__commerce_checkout_pay',
-  'mcp__moonpay__commerce_checkout_start',
-  'mcp__moonpay__commerce_product_retrieve',
-  'mcp__moonpay__commerce_product_search',
-  'mcp__moonpay__commerce_search',
-  'mcp__moonpay__commerce_store_list',
-  'mcp__moonpay__commerce_store_retrieve',
-  'mcp__moonpay__consent_accept',
-  'mcp__moonpay__consent_check',
-  'mcp__moonpay__deposit_create',
-  'mcp__moonpay__deposit_retrieve',
-  'mcp__moonpay__deposit_transaction_list',
-  'mcp__moonpay__feedback_create',
-  'mcp__moonpay__gateway_buy',
-  'mcp__moonpay__gateway_search',
-  'mcp__moonpay__hyperliquid_balance_retrieve',
-  'mcp__moonpay__hyperliquid_candle_list',
-  'mcp__moonpay__hyperliquid_deposit_create',
-  'mcp__moonpay__hyperliquid_exchange_submit',
-  'mcp__moonpay__hyperliquid_funding_payment_list',
-  'mcp__moonpay__hyperliquid_market_list',
-  'mcp__moonpay__hyperliquid_order_create',
-  'mcp__moonpay__hyperliquid_order_list',
-  'mcp__moonpay__hyperliquid_orderbook_retrieve',
-  'mcp__moonpay__hyperliquid_position_list',
-  'mcp__moonpay__hyperliquid_predicted_funding_list',
-  'mcp__moonpay__hyperliquid_price_list',
-  'mcp__moonpay__hyperliquid_trade_list',
-  'mcp__moonpay__login',
-  'mcp__moonpay__logout',
-  'mcp__moonpay__message_sign',
-  'mcp__moonpay__polymarket_position_redeem',
-  'mcp__moonpay__polymarket_position_sell',
-  'mcp__moonpay__prediction-market_event_list',
-  'mcp__moonpay__prediction-market_event_retrieve',
-  'mcp__moonpay__prediction-market_event_search',
-  'mcp__moonpay__prediction-market_market_ohlcv_list',
-  'mcp__moonpay__prediction-market_order_retrieve',
-  'mcp__moonpay__prediction-market_position_buy',
-  'mcp__moonpay__prediction-market_position_list',
-  'mcp__moonpay__prediction-market_position_redeem',
-  'mcp__moonpay__prediction-market_position_sell',
-  'mcp__moonpay__refresh',
-  'mcp__moonpay__skill_install',
-  'mcp__moonpay__skill_list',
-  'mcp__moonpay__skill_retrieve',
-  'mcp__moonpay__swaps_transaction_build',
-  'mcp__moonpay__token_balance_list',
-  'mcp__moonpay__token_bridge',
-  'mcp__moonpay__token_check',
-  'mcp__moonpay__token_holder_list',
-  'mcp__moonpay__token_list',
-  'mcp__moonpay__token_ohlcv_list',
-  'mcp__moonpay__token_quote',
-  'mcp__moonpay__token_retrieve',
-  'mcp__moonpay__token_search',
-  'mcp__moonpay__token_swap',
-  'mcp__moonpay__token_transfer',
-  'mcp__moonpay__token_trending_list',
-  'mcp__moonpay__transaction_list',
-  'mcp__moonpay__transaction_prepare',
-  'mcp__moonpay__transaction_register',
-  'mcp__moonpay__transaction_retrieve',
-  'mcp__moonpay__transaction_send',
-  'mcp__moonpay__transaction_sign',
-  'mcp__moonpay__upgrade',
-  'mcp__moonpay__user_retrieve',
-  'mcp__moonpay__verify',
-  'mcp__moonpay__virtual-account_agreement_accept',
-  'mcp__moonpay__virtual-account_agreement_list',
-  'mcp__moonpay__virtual-account_bank-account_delete',
-  'mcp__moonpay__virtual-account_bank-account_list',
-  'mcp__moonpay__virtual-account_bank-account_register',
-  'mcp__moonpay__virtual-account_bank-account_retrieve',
-  'mcp__moonpay__virtual-account_create',
-  'mcp__moonpay__virtual-account_kyc_continue',
-  'mcp__moonpay__virtual-account_kyc_restart',
-  'mcp__moonpay__virtual-account_offramp_cancel',
-  'mcp__moonpay__virtual-account_offramp_create',
-  'mcp__moonpay__virtual-account_offramp_initiate',
-  'mcp__moonpay__virtual-account_offramp_list',
-  'mcp__moonpay__virtual-account_offramp_retrieve',
-  'mcp__moonpay__virtual-account_offramp_update',
-  'mcp__moonpay__virtual-account_onramp_cancel',
-  'mcp__moonpay__virtual-account_onramp_create',
-  'mcp__moonpay__virtual-account_onramp_list',
-  'mcp__moonpay__virtual-account_onramp_payment_create',
-  'mcp__moonpay__virtual-account_onramp_payment_retrieve',
-  'mcp__moonpay__virtual-account_onramp_retrieve',
-  'mcp__moonpay__virtual-account_onramp_update',
-  'mcp__moonpay__virtual-account_retrieve',
-  'mcp__moonpay__virtual-account_transaction_list',
-  'mcp__moonpay__virtual-account_wallet_list',
-  'mcp__moonpay__virtual-account_wallet_register',
-  'mcp__moonpay__wallet_activity_list',
-  'mcp__moonpay__wallet_create',
-  'mcp__moonpay__wallet_delete',
-  'mcp__moonpay__wallet_discover',
-  'mcp__moonpay__wallet_export',
-  'mcp__moonpay__wallet_hardware_add',
-  'mcp__moonpay__wallet_hardware_refresh',
-  'mcp__moonpay__wallet_import',
-  'mcp__moonpay__wallet_keychain_backup',
-  'mcp__moonpay__wallet_keychain_delete',
-  'mcp__moonpay__wallet_keychain_list',
-  'mcp__moonpay__wallet_keychain_restore',
-  'mcp__moonpay__wallet_list',
-  'mcp__moonpay__wallet_pnl_retrieve',
-  'mcp__moonpay__wallet_rename',
-  'mcp__moonpay__wallet_retrieve',
-  'mcp__moonpay__x402_request',
+const ALL_NOVA_TOOLS = [
+  'mcp__nova__app_activation_create',
+  'mcp__nova__bitcoin_balance_retrieve',
+  'mcp__nova__buy',
+  'mcp__nova__card_create',
+  'mcp__nova__card_delegation_approve_transaction_build',
+  'mcp__nova__card_delegation_revoke_transaction_build',
+  'mcp__nova__card_delegation_token_retrieve',
+  'mcp__nova__card_freeze',
+  'mcp__nova__card_onboarding_check',
+  'mcp__nova__card_onboarding_finish',
+  'mcp__nova__card_onboarding_start',
+  'mcp__nova__card_retrieve',
+  'mcp__nova__card_reveal',
+  'mcp__nova__card_transaction_list',
+  'mcp__nova__card_unfreeze',
+  'mcp__nova__card_user_retrieve',
+  'mcp__nova__card_wallet_check',
+  'mcp__nova__card_wallet_link',
+  'mcp__nova__card_wallet_list',
+  'mcp__nova__card_wallet_unlink',
+  'mcp__nova__chain_list',
+  'mcp__nova__chain_retrieve',
+  'mcp__nova__commerce_cart_add',
+  'mcp__nova__commerce_cart_remove',
+  'mcp__nova__commerce_cart_retrieve',
+  'mcp__nova__commerce_cart_update',
+  'mcp__nova__commerce_checkout',
+  'mcp__nova__commerce_checkout_pay',
+  'mcp__nova__commerce_checkout_start',
+  'mcp__nova__commerce_product_retrieve',
+  'mcp__nova__commerce_product_search',
+  'mcp__nova__commerce_search',
+  'mcp__nova__commerce_store_list',
+  'mcp__nova__commerce_store_retrieve',
+  'mcp__nova__consent_accept',
+  'mcp__nova__consent_check',
+  'mcp__nova__deposit_create',
+  'mcp__nova__deposit_retrieve',
+  'mcp__nova__deposit_transaction_list',
+  'mcp__nova__feedback_create',
+  'mcp__nova__gateway_buy',
+  'mcp__nova__gateway_search',
+  'mcp__nova__hyperliquid_balance_retrieve',
+  'mcp__nova__hyperliquid_candle_list',
+  'mcp__nova__hyperliquid_deposit_create',
+  'mcp__nova__hyperliquid_exchange_submit',
+  'mcp__nova__hyperliquid_funding_payment_list',
+  'mcp__nova__hyperliquid_market_list',
+  'mcp__nova__hyperliquid_order_create',
+  'mcp__nova__hyperliquid_order_list',
+  'mcp__nova__hyperliquid_orderbook_retrieve',
+  'mcp__nova__hyperliquid_position_list',
+  'mcp__nova__hyperliquid_predicted_funding_list',
+  'mcp__nova__hyperliquid_price_list',
+  'mcp__nova__hyperliquid_trade_list',
+  'mcp__nova__login',
+  'mcp__nova__logout',
+  'mcp__nova__message_sign',
+  'mcp__nova__polymarket_position_redeem',
+  'mcp__nova__polymarket_position_sell',
+  'mcp__nova__prediction-market_event_list',
+  'mcp__nova__prediction-market_event_retrieve',
+  'mcp__nova__prediction-market_event_search',
+  'mcp__nova__prediction-market_market_ohlcv_list',
+  'mcp__nova__prediction-market_order_retrieve',
+  'mcp__nova__prediction-market_position_buy',
+  'mcp__nova__prediction-market_position_list',
+  'mcp__nova__prediction-market_position_redeem',
+  'mcp__nova__prediction-market_position_sell',
+  'mcp__nova__refresh',
+  'mcp__nova__skill_install',
+  'mcp__nova__skill_list',
+  'mcp__nova__skill_retrieve',
+  'mcp__nova__swaps_transaction_build',
+  'mcp__nova__token_balance_list',
+  'mcp__nova__token_bridge',
+  'mcp__nova__token_check',
+  'mcp__nova__token_holder_list',
+  'mcp__nova__token_list',
+  'mcp__nova__token_ohlcv_list',
+  'mcp__nova__token_quote',
+  'mcp__nova__token_retrieve',
+  'mcp__nova__token_search',
+  'mcp__nova__token_swap',
+  'mcp__nova__token_transfer',
+  'mcp__nova__token_trending_list',
+  'mcp__nova__transaction_list',
+  'mcp__nova__transaction_prepare',
+  'mcp__nova__transaction_register',
+  'mcp__nova__transaction_retrieve',
+  'mcp__nova__transaction_send',
+  'mcp__nova__transaction_sign',
+  'mcp__nova__upgrade',
+  'mcp__nova__user_retrieve',
+  'mcp__nova__verify',
+  'mcp__nova__virtual-account_agreement_accept',
+  'mcp__nova__virtual-account_agreement_list',
+  'mcp__nova__virtual-account_bank-account_delete',
+  'mcp__nova__virtual-account_bank-account_list',
+  'mcp__nova__virtual-account_bank-account_register',
+  'mcp__nova__virtual-account_bank-account_retrieve',
+  'mcp__nova__virtual-account_create',
+  'mcp__nova__virtual-account_kyc_continue',
+  'mcp__nova__virtual-account_kyc_restart',
+  'mcp__nova__virtual-account_offramp_cancel',
+  'mcp__nova__virtual-account_offramp_create',
+  'mcp__nova__virtual-account_offramp_initiate',
+  'mcp__nova__virtual-account_offramp_list',
+  'mcp__nova__virtual-account_offramp_retrieve',
+  'mcp__nova__virtual-account_offramp_update',
+  'mcp__nova__virtual-account_onramp_cancel',
+  'mcp__nova__virtual-account_onramp_create',
+  'mcp__nova__virtual-account_onramp_list',
+  'mcp__nova__virtual-account_onramp_payment_create',
+  'mcp__nova__virtual-account_onramp_payment_retrieve',
+  'mcp__nova__virtual-account_onramp_retrieve',
+  'mcp__nova__virtual-account_onramp_update',
+  'mcp__nova__virtual-account_retrieve',
+  'mcp__nova__virtual-account_transaction_list',
+  'mcp__nova__virtual-account_wallet_list',
+  'mcp__nova__virtual-account_wallet_register',
+  'mcp__nova__wallet_activity_list',
+  'mcp__nova__wallet_create',
+  'mcp__nova__wallet_delete',
+  'mcp__nova__wallet_discover',
+  'mcp__nova__wallet_export',
+  'mcp__nova__wallet_hardware_add',
+  'mcp__nova__wallet_hardware_refresh',
+  'mcp__nova__wallet_import',
+  'mcp__nova__wallet_keychain_backup',
+  'mcp__nova__wallet_keychain_delete',
+  'mcp__nova__wallet_keychain_list',
+  'mcp__nova__wallet_keychain_restore',
+  'mcp__nova__wallet_list',
+  'mcp__nova__wallet_pnl_retrieve',
+  'mcp__nova__wallet_rename',
+  'mcp__nova__wallet_retrieve',
+  'mcp__nova__x402_request',
 ];
 
 // Sanity check at boot: every tool we intend to allow must actually exist on
 // the server, or we'd silently lose a capability (the cause of the earlier
 // "I don't have that" on prediction markets).
 for (const t of OWNER_READ_TOOLS) {
-  if (!ALL_MOONPAY_TOOLS.includes(t)) {
+  if (!ALL_NOVA_TOOLS.includes(t)) {
     console.warn(`[agent] allowlisted tool not found on MCP server: ${t}`);
   }
 }
@@ -323,7 +336,7 @@ class MessageQueue {
 
 /**
  * One ClankerSession per phone call. Holds a long-lived Agent SDK query in
- * streaming-input mode so the MoonPay MCP server stays warm and conversation
+ * streaming-input mode so the Nova MCP server stays warm and conversation
  * context carries across turns.
  */
 export class ClankerSession {
@@ -335,14 +348,14 @@ export class ClankerSession {
     this.turn = null; // { status: 'thinking'|'ready'|'error', answer }
     this.ended = false;
 
-    const moonpayAllowed = isOwner ? OWNER_READ_TOOLS : PUBLIC_READ_TOOLS;
-    const allowedTools = [...moonpayAllowed, ...WEB_TOOLS];
+    const novaAllowed = isOwner ? OWNER_READ_TOOLS : PUBLIC_READ_TOOLS;
+    const allowedTools = [...novaAllowed, ...WEB_TOOLS];
     const allowedSet = new Set(allowedTools);
-    // Prune every MoonPay tool we don't use from the model's context. With
+    // Prune every Nova tool we don't use from the model's context. With
     // alwaysLoad (below) this leaves just our read tools loaded up front — no
     // tool-search round-trip per turn, the main per-reply latency win. Web
-    // tools aren't MoonPay tools, so they're never in this disallow list.
-    const disallowedTools = ALL_MOONPAY_TOOLS.filter((t) => !allowedSet.has(t));
+    // tools aren't Nova tools, so they're never in this disallow list.
+    const disallowedTools = ALL_NOVA_TOOLS.filter((t) => !allowedSet.has(t));
 
     this.query = query({
       prompt: this.queue,
@@ -354,11 +367,11 @@ export class ClankerSession {
         mcpServers: {
           // alwaysLoad: include this server's (surviving) tools in the turn-1
           // prompt instead of deferring them behind tool search.
-          moonpay: { type: 'stdio', command: 'mp', args: ['mcp'], alwaysLoad: true },
+          nova: { type: 'stdio', command: 'mp', args: ['mcp'], alwaysLoad: true },
         },
-        tools: WEB_TOOLS, // built-in WebSearch/WebFetch for news; MoonPay MCP for the rest
+        tools: WEB_TOOLS, // built-in WebSearch/WebFetch for news; Nova MCP for the rest
         allowedTools, // read-only tools auto-approved, no permission prompt
-        disallowedTools, // the other ~115 MoonPay tools — out of context entirely
+        disallowedTools, // the other ~115 Nova tools — out of context entirely
         // Default mode (NOT bypassPermissions) so the gate below actually runs
         // for any tool that isn't pre-approved above.
         permissionMode: 'default',

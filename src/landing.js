@@ -129,7 +129,7 @@ export async function landingPage() {
       <div class="cap">Scan to call<span>${display}</span></div>
     </div>
   </div>
-  <footer>Powered by MoonPay agent tools, Claude, Twilio &amp; ElevenLabs. Informational only — not financial advice.</footer>
+  <footer>Powered by Nova agent tools, Claude, Twilio &amp; ElevenLabs. Informational only — not financial advice.</footer>
 </body>
 </html>`;
   return cached;
